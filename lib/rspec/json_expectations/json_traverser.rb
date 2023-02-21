@@ -9,21 +9,23 @@ module RSpec
     # json atom paths.
     class JsonTraverser
       HANDLED_BY_SIMPLE_VALUE_HANDLER = [String, Numeric, FalseClass, TrueClass, NilClass]
-      RSPECMATCHERS = [RSpec::Matchers::BuiltIn::BaseMatcher, RSpec::Matchers::AliasedMatcher]
-      SUPPORTED_VALUES = [Hash, Regexp, Array, Matchers::UnorderedArrayMatcher] +
-        HANDLED_BY_SIMPLE_VALUE_HANDLER + RSPECMATCHERS
 
       class << self
         def traverse(errors, expected, actual, negate=false, prefix=[], options={})
-          [
+          results = [
             handle_hash(errors, expected, actual, negate, prefix),
             handle_array(errors, expected, actual, negate, prefix),
             handle_unordered(errors, expected, actual, negate, prefix, options),
             handle_value(errors, expected, actual, negate, prefix),
             handle_regex(errors, expected, actual, negate, prefix),
-            handle_rspec_matcher(errors, expected, actual, negate, prefix),
-            handle_unsupported(expected)
-          ].any?
+            handle_rspec_matcher(errors, expected, actual, negate, prefix)
+          ]
+
+          if results.compact.empty?
+            raise NotImplementedError, "#{expected} expectation is not supported"
+          end
+
+          results.any?
         end
 
         private
@@ -114,10 +116,18 @@ module RSpec
 
         def handle_rspec_matcher(errors, expected, actual, negate=false, prefix=[])
           return nil unless defined?(RSpec::Matchers)
-          return nil unless expected.is_a?(RSpec::Matchers::BuiltIn::BaseMatcher) ||
-            expected.is_a?(RSpec::Matchers::AliasedMatcher)
+          return nil unless expected.respond_to?(:description)
+          result = false
 
-          if conditionally_negate(!!expected.matches?(actual), negate)
+          if expected.respond_to?(:matches?)
+            result = expected.matches?(actual)
+          elsif expected.respond_to?(:===)
+            result = expected === actual
+          else
+            return nil
+          end
+
+          if conditionally_negate(!!result, negate)
             true
           else
             errors[prefix.join("/")] = {
@@ -125,13 +135,6 @@ module RSpec
               expected: expected.description
             }
             false
-          end
-        end
-
-        def handle_unsupported(expected)
-          unless SUPPORTED_VALUES.any? { |type| expected.is_a?(type) }
-            raise NotImplementedError,
-              "#{expected} expectation is not supported"
           end
         end
 
